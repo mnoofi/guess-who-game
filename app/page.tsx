@@ -1,65 +1,294 @@
-import Image from "next/image";
+"use client"
 
-export default function Home() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+import { ref, set, get, update, onValue } from "firebase/database"
+import { db } from "@/lib/firebase"
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "firebase/auth"
+import { auth } from "@/lib/firebase"
+import { useState, useEffect } from "react"
+import CharacterCard from "../components/CharacterCard"
+
+export default function Home(){
+
+const [user,setUser] = useState<any>(null)
+
+const [removed,setRemoved] = useState<number[]>([])
+const [opponentRemoved,setOpponentRemoved] = useState(0)
+
+const [chosenCharacter,setChosenCharacter] = useState<number|null>(null)
+
+const [roomCode,setRoomCode] = useState("")
+
+const [playersReady,setPlayersReady] = useState(false)
+
+const [characters,setCharacters] = useState<any[]>([])
+
+const provider = new GoogleAuthProvider()
+
+async function loginWithGoogle(){
+const result = await signInWithPopup(auth,provider)
+setUser(result.user)
+}
+
+useEffect(()=>{
+
+const unsubscribe = onAuthStateChanged(auth,(u)=>{
+setUser(u)
+})
+
+generateCharacters()
+
+return ()=>unsubscribe()
+
+},[])
+
+function generateCharacters(){
+
+const generated = Array.from({length:25}).map((_,i)=>{
+
+const seed = Math.random().toString(36).substring(7)
+
+return{
+id:i,
+avatar:`https://api.dicebear.com/7.x/adventurer/svg?seed=${seed}`
+}
+
+})
+
+setCharacters(generated)
+
+}
+
+function createRoom(){
+
+if(!user){
+alert("Login first")
+return
+}
+
+console.log("CREATE ROOM CLICKED")
+
+const code = Math.random().toString(36).substring(2,7).toUpperCase()
+
+console.log("ROOM CODE:",code)
+
+setRoomCode(code)
+
+set(ref(db,"rooms/"+code),{
+players:{
+[user.uid]:{
+removed:0
+}
+}
+})
+
+alert("Room created: "+code)
+
+listenRoom(code)
+
+}
+
+async function joinRoom(){
+
+if(!user){
+alert("Login first")
+return
+}
+
+console.log("JOIN ROOM:",roomCode)
+
+const roomRef = ref(db,"rooms/"+roomCode)
+
+const snapshot = await get(roomRef)
+
+if(!snapshot.exists()){
+alert("Room not found")
+return
+}
+
+update(ref(db,"rooms/"+roomCode+"/players/"+user.uid),{
+removed:0
+})
+
+listenRoom(roomCode)
+
+}
+
+function listenRoom(code:string){
+
+const roomRef = ref(db,"rooms/"+code)
+
+onValue(roomRef,(snapshot)=>{
+
+const data = snapshot.val()
+
+if(!data) return
+
+const players:any = data.players || {}
+
+const ids = Object.keys(players)
+
+if(ids.length === 2){
+setPlayersReady(true)
+}
+
+const opponentId = ids.find(id=>id !== user?.uid)
+
+if(opponentId){
+
+const opponent = players[opponentId]
+
+setOpponentRemoved(opponent?.removed || 0)
+
+}
+
+})
+
+}
+
+function toggleCard(id:number){
+
+let newRemoved
+
+if(removed.includes(id)){
+newRemoved = removed.filter(x=>x!==id)
+}else{
+newRemoved = [...removed,id]
+}
+
+setRemoved(newRemoved)
+
+update(ref(db,"rooms/"+roomCode+"/players/"+user.uid),{
+removed:newRemoved.length
+})
+
+}
+
+const remaining = 25 - removed.length
+
+if(!user){
+
+return(
+
+<div className="p-10 flex justify-center">
+
+<button
+onClick={loginWithGoogle}
+className="bg-black text-white px-6 py-3 rounded"
+
+>
+
+Sign in with Google
+
+</button>
+
+</div>
+
+)
+
+}
+
+return(
+
+<main className="p-10">
+
+<div className="mb-6 flex items-center gap-4">
+
+<img
+src={user?.photoURL || ""}
+className="w-10 h-10 rounded-full"
+/>
+
+<p className="font-semibold">
+{user?.displayName}
+</p>
+
+<button
+onClick={()=>signOut(auth)}
+className="bg-red-500 text-white px-3 py-1 rounded"
+
+>
+
+Logout
+
+</button>
+
+</div>
+
+<h1 className="text-3xl font-bold mb-4">
+
+Guess Who
+
+</h1>
+
+<div className="mb-6 flex gap-2">
+
+<button
+onClick={createRoom}
+className="bg-blue-500 text-white px-4 py-2 rounded"
+
+>
+
+Create Room
+
+</button>
+
+<input
+placeholder="Room Code"
+value={roomCode}
+onChange={(e)=>setRoomCode(e.target.value)}
+className="border p-2"
+/>
+
+<button
+onClick={joinRoom}
+className="bg-green-500 text-white px-4 py-2 rounded"
+
+>
+
+Join Room
+
+</button>
+
+</div>
+
+<div className="mb-4">
+
+<p>Remaining Cards: {remaining}</p>
+
+<p>Opponent Removed: {opponentRemoved}</p>
+
+</div>
+
+<div className="grid grid-cols-5 gap-4">
+
+{characters.map((c)=>(
+
+<div key={c.id} className="relative">
+
+<button
+onClick={()=>toggleCard(c.id)}
+className="absolute top-1 left-1 bg-black text-white text-xs px-2 py-1 rounded z-10"
+
+>
+
+X
+
+</button>
+
+<CharacterCard
+avatar={c.avatar}
+removed={removed.includes(c.id)}
+onClick={()=>{}}
+/>
+
+</div>
+
+))}
+
+</div>
+
+</main>
+
+)
+
 }
